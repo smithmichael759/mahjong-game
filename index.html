@@ -1415,28 +1415,22 @@ function playClip(uri){
   };
   if(clipCache[key]) return Promise.resolve(playBuf(clipCache[key]));
   if(isObj){
-    /* 首选：原生 audio 元素 jsDelivr 流式播放（边下边播，出声最快）；
-       失败再走 WebAudio 下载+解码；都失败由上层回退系统朗读 */
-    return playClipEl(uri).then(ok=>{
-      if(ok) return true;
-      DBG('audio元素失败 → WebAudio 通道');
-      return decodeClip(uri).then(playBuf).catch(e=>{ DBG('WebAudio也失败: ' + ((e && e.message) || e)); return false; });
+    /* 主通道：WebAudio 下载+解码（实测 jsDelivr 约1秒/文件），失败才用原生audio元素 */
+    return decodeClip(uri).then(playBuf).catch(e=>{
+      DBG('WebAudio失败: ' + ((e && e.message) || e) + ' → 原生audio元素');
+      return playClipEl(uri);
     });
   }
   return Promise.resolve(false);
 }
-/* 进游戏后预热在座 4 位角色的语音文件，避免开口时还在下载 */
+/* 进游戏后立刻并行预热在场角色的语音文件（jsDelivr 约1秒/个），台词基本秒出 */
 function preloadCharVoices(){
   if(!audioCtx) return;
   const ids = [];
   (G.players||[]).forEach(p=>{ if(p && p.char && ids.indexOf(p.char.id)<0) ids.push(p.char.id); });
-  let i = 0;
-  const next = ()=>{
-    if(i >= ids.length || !audioCtx) return;
-    const f = ids[i++] + '.mp3';
-    getVoiceBuf(f).then(()=>setTimeout(next, 80)).catch(err=>{ DBG('预热失败 ' + f + ': ' + err.message); setTimeout(next, 80); });
-  };
-  setTimeout(next, 250);
+  ids.forEach(id=>{
+    getVoiceBuf(id + '.mp3').then(()=>DBG('预热完成 ' + id)).catch(err=>DBG('预热失败 ' + id + ': ' + (err && err.message)));
+  });
 }
 /* 性能优化：不再一次性解码全部 150+ 段语音（手机端会占用大量内存并持续抢主线程），
    只预解码在座角色“开局台词”的少量片段，其余在播放时按需解码并缓存。 */
@@ -1674,9 +1668,9 @@ function initAudio(){
     voiceGain.connect(audioCtx.destination);
     startBGM();
     DBG('音频初始化 OK, state=' + audioCtx.state);
-    // 空闲时再预解码少量语音，避免开局瞬间卡顿
-    if(window.requestIdleCallback) requestIdleCallback(()=>{ preloadVoicePack(); preloadCharVoices(); }, {timeout:3000});
-    else setTimeout(()=>{ preloadVoicePack(); preloadCharVoices(); }, 1500);
+    // 立刻预热：开局台词解码 + 在场角色语音文件并行下载
+    try{ preloadVoicePack(); }catch(e){}
+    try{ preloadCharVoices(); }catch(e){}
   }catch(e){ console.warn('音频初始化失败', e); }
 }
 /* ---------------- 切后台声音恢复 ----------------
