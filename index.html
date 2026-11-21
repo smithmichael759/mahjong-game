@@ -949,7 +949,7 @@ const CHARACTERS = {
     profile:{
       人设:'35岁的漂亮小姐姐，广东汕头人，最享受宅在家里的时光——泡一泡工夫茶，追追剧，打打牌，舒服自在；一口地道的流利汕头本地话，慢悠悠的，透着胶己人的亲劲。',
       牌风:'不急不躁，像老厝门口的功夫茶——慢慢冲，慢慢品，胡牌却常常又快又准。',
-      必杀技:'工夫茶局——发动后本局输了不扣积分，积分分文不动，稳赚不赔（每局1次）。'
+      必杀技:'工夫茶局——发动后本局所有输家被扣的积分不再扣，全部变正数，加进「真」的积分，稳赚不赔（每局1次）。'
     },
     catchphrase:'迈慌，食杯茶，牌自然来。',
     lines:{
@@ -976,7 +976,7 @@ const SKILLS = {
   xiang:   { icon:'减', name:'我要减肥', desc:'发动后选一张手牌与弃牌堆里的任意牌对换（每局2次）' },
   daidai:  { icon:'山', name:'山姆是我家', desc:'发动后本局输了不扣积分，稳赚不赔（每局1次）' },
   haiqilai:{ icon:'班', name:'爆肝加班', desc:'发动后本回合连续多摸2次牌，加班使我强大（每局2次）' },
-  zhen:    { icon:'茶', name:'工夫茶局', desc:'发动后本局输了不扣积分，稳赚不赔（每局1次）' }
+  zhen:    { icon:'茶', name:'工夫茶局', desc:'发动后本局所有输家被扣的积分不再扣，全部变正数加进「真」的积分（每局1次）' }
 };
 
 /* ---------------- 牌定义 ---------------- */
@@ -1109,7 +1109,7 @@ function tenpaiText(list){
 const G = {
   players:[], wall:[], dealer:0, turn:0, phase:'idle',
   roundNo:1, lastDiscard:null, reveal:false, humanId:'luzong', autoPlay:false,
-  skillUsed:[false,false,false,false], skillUses:[0,0,0,0], extraDraws:[0,0,0,0], dietMode:false, dietHandIdx:null, samSeat:null, shield:null, shieldCharges:0, doubleSeat:null, swapMode:false, selIdx:null
+  skillUsed:[false,false,false,false], skillUses:[0,0,0,0], extraDraws:[0,0,0,0], dietMode:false, dietHandIdx:null, samSeat:null, absorbSeat:null, shield:null, shieldCharges:0, doubleSeat:null, swapMode:false, selIdx:null
 };
 const $ = s=>document.querySelector(s);
 const sleep = ms=>new Promise(r=>setTimeout(r,ms));
@@ -1941,7 +1941,7 @@ async function startRound(){
   G.wall = buildWall();
   G.players.forEach(p=>{ p.hand=[]; p.melds=[]; p.discards=[]; p.announcedTenpai=false; });
   G.lastDiscard=null; G.drawnTile=null; G.reveal=false;
-  G.skillUsed=[false,false,false,false]; G.skillUses=[0,0,0,0]; G.extraDraws=[0,0,0,0]; G.dietMode=false; G.dietHandIdx=null; G.samSeat=null; G.shield=null; G.shieldCharges=0; G.doubleSeat=null; G.swapMode=false; G.swapMark=null;
+  G.skillUsed=[false,false,false,false]; G.skillUses=[0,0,0,0]; G.extraDraws=[0,0,0,0]; G.dietMode=false; G.dietHandIdx=null; G.samSeat=null; G.absorbSeat=null; G.shield=null; G.shieldCharges=0; G.doubleSeat=null; G.swapMode=false; G.swapMark=null;
   // 发牌：每人13张（普通麻将标准）
   for(let r=0;r<13;r++) for(let i=0;i<4;i++) G.players[i].hand.push(G.wall.pop());
   G.players.forEach(p=>sortHand(p.hand));
@@ -2488,6 +2488,21 @@ async function winRound(winner, discarder, selfDraw){
     changes[G.samSeat] = 0;
   }
   G.samSeat = null;
+  let absorbNote = '', absorbMsg = '';
+  if(G.absorbSeat!==null && G.absorbSeat!==undefined){
+    const zi = G.absorbSeat;
+    if(G.players[zi]){
+      let absorbed = 0;
+      for(let i=0;i<4;i++){
+        if(i!==zi && changes[i]<0){ absorbed += -changes[i]; changes[i]=0; } // 输家不再扣分
+      }
+      if(changes[zi]<0){ absorbed += -changes[zi]; changes[zi]=0; } // 「真」自己也输了：她的扣分同样翻正
+      changes[zi]+=absorbed; // 全部变正数加进「真」的积分
+      absorbMsg = '【工夫茶局】输家扣的 ' + absorbed + ' 积分全部变正数，加进 ' + G.players[zi].char.name + ' 的积分！';
+      absorbNote = '　🍵 <b>工夫茶局：输家扣的 ' + absorbed + ' 积分已变正数加给 ' + G.players[zi].char.name + '</b>';
+    }
+  }
+  G.absorbSeat = null;
   G.players.forEach((pl,i)=> pl.points += changes[i]);
   const avm = pl => `<span class="av-mini">${portraitImg(pl.char.id)}</span>`;
 
@@ -2496,12 +2511,13 @@ async function winRound(winner, discarder, selfDraw){
   if(loserLine) setTimeout(()=>say(discarder, loserLine, true), 1400);
 
   setCenterMsg(`${p.char.name} ${selfDraw?'自摸':'胡牌'}！${tai.total} 台！`, true);
+  if(absorbMsg) setTimeout(()=>setCenterMsg(absorbMsg, true), 1800); // 吸收提示跟在胡牌横幅后面，避免被覆盖
   await sleep(1600);
 
   // 结算面板
   $('#result-title').textContent = selfDraw ? '自摸胡牌！' : '胡牌！';
   $('#result-sub').textContent = `${p.char.name}（${p.char.title}）${selfDraw?'自摸':'接炮'} · ${tai.total} 台`;
-  $('#tai-detail').innerHTML = tai.items.map(x=>`${x[0]} <b>+${x[1]}台</b>`).join('　｜　') + `<br><b>合计 ${tai.total} 台</b>` + (G.doubleSeat!==null?'　💰 <b>家财万贯：本局积分 ×2</b>':'');
+  $('#tai-detail').innerHTML = tai.items.map(x=>`${x[0]} <b>+${x[1]}台</b>`).join('　｜　') + `<br><b>合计 ${tai.total} 台</b>` + (G.doubleSeat!==null?'　💰 <b>家财万贯：本局积分 ×2</b>':'') + absorbNote;
   $('#points-table').innerHTML =
     `<tr><th>角色</th><th>本局变动</th><th>当前点数</th></tr>` +
     G.players.map((pl,i)=>`<tr><td>${avm(pl)} ${pl.char.name}${i===0?'（你）':''}</td>
@@ -2957,9 +2973,9 @@ function useSkillEffect(i){
     say(i, '爆肝加班！连摸两把，加班使我强大！', true);
     setCenterMsg('【爆肝加班】本回合接下来连续 2 次摸牌机会', true);
   }else if(id==='zhen'){
-    G.samSeat = i;
-    say(i, '工夫茶局！食杯茶压压惊，这局就是输了，积分一分嘛无扣！', true);
-    setCenterMsg('【工夫茶局】本局若输，积分分文不扣', true);
+    G.absorbSeat = i;
+    say(i, '工夫茶局！这局谁输，扣的分拢总变正数，通通入我的袋！', true);
+    setCenterMsg('【工夫茶局】本局输家扣的积分全部变正数，加进 ' + p.char.name + ' 的积分', true);
   }else if(id==='xiang'){
     if(!p.isHuman){
       const best = findBestDiet(p);
