@@ -1323,27 +1323,32 @@ function decodeAB(ab){
 }
 /* 备用播放通道：原生 audio 元素（不依赖 decodeAudioData，微信/安卓兼容性最好） */
 let voiceEl = null, voiceElTimer = null;
+/* 原生 audio 播放：支持多 CDN 源依次尝试，边下边播（弱网下出声最快） */
 function playClipEl(uri){
   return new Promise(resolve=>{
     try{
-      if(!voiceEl){ voiceEl = new Audio(); voiceEl.preload = 'auto'; }
-      const src = new URL('voices/' + uri.f, location.href).href;
+      const JSD = 'https://cdn.jsdelivr.net/gh/Smithmichael759/mahjong-game@main/voices/';
+      const urls = [JSD + uri.f, new URL('voices/' + uri.f, location.href).href];
+      if(!voiceEl){ voiceEl = new Audio(); voiceEl.preload = 'auto'; voiceEl.muted = !soundOn; }
       const startAt = uri.s || 0, dur = uri.d || 3;
-      let settled = false;
+      let settled = false, idx = 0;
       const finish = ok=>{ if(!settled){ settled = true; resolve(ok); } };
-      voiceEl.onerror = ()=>{ DBG('audio元素加载失败'); finish(false); };
+      voiceEl.onerror = ()=>{
+        idx++;
+        if(idx < urls.length){ DBG('源失败，换备用源…'); voiceEl.src = urls[idx]; }
+        else { DBG('audio元素全部源失败'); finish(false); }
+      };
       voiceEl.onloadedmetadata = ()=>{
         try{ voiceEl.currentTime = startAt; }catch(e){}
         voiceEl.play().then(()=>{
-          DBG('audio元素播放 ' + uri.f + '@' + startAt + ' ' + dur.toFixed(1) + 's');
+          DBG('播放(audio元素·流式) ' + uri.f + '@' + startAt + ' ' + dur.toFixed(1) + 's');
           clearTimeout(voiceElTimer);
           voiceElTimer = setTimeout(()=>{ try{ voiceEl.pause(); }catch(e){} }, dur*1000);
           finish(true);
         }).catch(err=>{ DBG('audio元素被拦截: ' + (err && err.message)); finish(false); });
       };
-      if(voiceEl.src !== src){ voiceEl.src = src; }
-      else if(voiceEl.readyState >= 1){ voiceEl.onloadedmetadata(); }
-      setTimeout(()=>finish(false), 4000);
+      voiceEl.src = urls[0];
+      setTimeout(()=>finish(false), 15000);
     }catch(e){ DBG('audio元素异常: ' + e.message); resolve(false); }
   });
 }
@@ -1357,11 +1362,11 @@ function getVoiceBuf(f){
     const t = setTimeout(()=>ctl.abort(), ms);
     return fetch(url, {signal: ctl.signal}).finally(()=>clearTimeout(t));
   };
-  return fTO('voices/'+f, 9000).then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
-    .then(ab=>{ DBG(`下载 ${f} ${(ab.byteLength/1024)|0}KB ${Date.now()-t0}ms`); return ab; })
+  return fTO(JSD + f, 12000).then(r=>{ if(!r.ok) throw new Error('jsd http '+r.status); return r.arrayBuffer(); })
+    .then(ab=>{ DBG(`下载 ${f} ${(ab.byteLength/1024)|0}KB ${Date.now()-t0}ms (jsDelivr)`); return ab; })
     .catch(err=>{
-      DBG(`主通道失败 ${f}: ${err && err.message || err}，换 jsDelivr`);
-      return fTO(JSD + f, 9000).then(r=>{ if(!r.ok) throw new Error('jsd http '+r.status); return r.arrayBuffer(); });
+      DBG(`jsDelivr 失败 ${f}: ${err && err.message || err}，换 GitHub 源`);
+      return fTO('voices/'+f, 12000).then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); });
     })
     .then(ab=>decodeAB(ab))
     .then(buf=>{ DBG(`解码 ${f} OK ${buf.duration.toFixed(1)}s`); fileBufCache[f]=buf; return buf; })
@@ -1396,27 +1401,29 @@ function decodeClip(uri){
   return p.then(buf=>{ clipCache[uri]=buf; return buf; });
 }
 function playClip(uri){
+  if(!soundOn || !uri){ return Promise.resolve(false); }
   if(!audioCtx || !voiceGain){ DBG('播放跳过：音频上下文未就绪'); return Promise.resolve(false); }
-  const raced = Promise.race([
-    decodeClip(uri).then(buf=>{
-      if(!soundOn) return false;
-      if(curClipSrc){ try{ curClipSrc.stop(); }catch(e){} }
-      const s = audioCtx.createBufferSource();
-      s.buffer = buf; s.connect(voiceGain); s.start();
-      curClipSrc = s;
-      DBG('播放 ' + (typeof uri==='object' ? (uri.f+'@'+uri.s) : 'clip') + ' ' + buf.duration.toFixed(2) + 's ctx=' + audioCtx.state);
-      return true;
-    }).catch(e=>{
-      DBG('WebAudio播放失败: ' + ((e && e.message) || e) + ' → 改用原生audio通道');
-      if(uri && typeof uri==='object' && uri.f) return playClipEl(uri);
-      return false;
-    }),
-    new Promise(res=>setTimeout(()=>res('timeout'), 12000))
-  ]).then(v=>{
-    if(v === 'timeout'){ DBG('播放超时(12s未完成)'); return false; }
-    return v;
-  });
-  return raced;
+  const isObj = uri && typeof uri==='object' && uri.f;
+  const key = isObj ? uri.f+'@'+Math.round(uri.s*1000) : uri;
+  const playBuf = (buf)=>{
+    if(curClipSrc){ try{ curClipSrc.stop(); }catch(e){} }
+    const s = audioCtx.createBufferSource();
+    s.buffer = buf; s.connect(voiceGain); s.start();
+    curClipSrc = s;
+    DBG('播放(WebAudio·已缓存) ' + key + ' ctx=' + audioCtx.state);
+    return true;
+  };
+  if(clipCache[key]) return Promise.resolve(playBuf(clipCache[key]));
+  if(isObj){
+    /* 首选：原生 audio 元素 jsDelivr 流式播放（边下边播，出声最快）；
+       失败再走 WebAudio 下载+解码；都失败由上层回退系统朗读 */
+    return playClipEl(uri).then(ok=>{
+      if(ok) return true;
+      DBG('audio元素失败 → WebAudio 通道');
+      return decodeClip(uri).then(playBuf).catch(e=>{ DBG('WebAudio也失败: ' + ((e && e.message) || e)); return false; });
+    });
+  }
+  return Promise.resolve(false);
 }
 /* 进游戏后预热在座 4 位角色的语音文件，避免开口时还在下载 */
 function preloadCharVoices(){
@@ -1653,7 +1660,12 @@ function initAudio(){
   if(!AC) return;
     try{
       audioCtx = new AC();
-      audioCtx.onstatechange = ()=> DBG('音频状态 → ' + audioCtx.state);
+      audioCtx.onstatechange = ()=>{
+        DBG('音频状态 → ' + audioCtx.state);
+        if(audioCtx.state === 'interrupted' || audioCtx.state === 'suspended'){
+          audioCtx.resume().catch(()=>{});
+        }
+      };
       bgmGain = audioCtx.createGain();
     bgmGain.gain.value = soundOn ? BGM_VOL : 0;
     bgmGain.connect(audioCtx.destination);
@@ -1686,9 +1698,10 @@ function kickAudio(){
     if(!bgmScheduler) startBGM(); // 有些浏览器后台会停掉调度器
   }).catch(e=>{ DBG('唤醒失败: ' + (e && e.message)); });
 }
-document.addEventListener('visibilitychange', ()=>{
+  document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){
     try{ if(curClipSrc){ curClipSrc.stop(); } }catch(e){}
+    try{ if(voiceEl){ voiceEl.pause(); } }catch(e){}
     try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
   }else{
     kickAudio();
@@ -1704,6 +1717,7 @@ $('#mute-btn').onclick = ()=>{
   b.classList.toggle('muted', !soundOn);
   if(bgmGain) bgmGain.gain.value = soundOn ? BGM_VOL : 0;
   if(voiceGain) voiceGain.gain.value = soundOn ? 1 : 0;
+  if(voiceEl) voiceEl.muted = !soundOn;
   if(!soundOn){
     if(curClipSrc){ try{ curClipSrc.stop(); }catch(e){} }
     if('speechSynthesis' in window){ try{ speechSynthesis.cancel(); }catch(e){} }
