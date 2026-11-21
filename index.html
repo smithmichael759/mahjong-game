@@ -1275,6 +1275,37 @@ function DBG(msg){
     dbgBox.scrollTop = dbgBox.scrollHeight;
   }catch(e){}
 }
+/* 一键语音测试：在手势里跑完整链路（解锁挂起 + 下载 + 解码 + 播放），逐步报告 */
+function dbgVoiceTest(){
+  DBG('══ 一键语音测试开始 ══');
+  if(!audioCtx) initAudio();
+  setTimeout(async ()=>{
+    try{
+      if(!audioCtx){ DBG('❌ 音频上下文创建失败'); return; }
+      if(audioCtx.state !== 'running'){ await audioCtx.resume().catch(()=>{}); }
+      DBG('1/4 音频状态: ' + audioCtx.state + (audioCtx.state==='running' ? ' ✅' : ' ❌ 仍挂起'));
+      const t0 = Date.now();
+      const r = await fetch('voices/luzong.mp3', {cache:'no-store'});
+      const ab = await r.arrayBuffer();
+      DBG('2/4 下载: HTTP ' + r.status + ' ' + ((ab.byteLength/1024)|0) + 'KB ' + (Date.now()-t0) + 'ms' + (r.ok ? ' ✅' : ' ❌'));
+      const buf = await decodeAB(ab);
+      DBG('3/4 解码: ' + buf.duration.toFixed(1) + 's 采样率' + buf.sampleRate + ' ✅');
+      const s = audioCtx.createBufferSource();
+      s.buffer = buf; s.connect(voiceGain || audioCtx.destination);
+      s.start(0, 0.15, 4);
+      DBG('4/4 已播放陆总语音4秒 ✅ —— 听到人声了吗？');
+    }catch(e){ DBG('❌ 测试中断: ' + ((e && e.message) || e)); }
+  }, 60);
+}
+if(DBG_ON){
+  window.addEventListener('load', ()=>{
+    const btn = document.createElement('button');
+    btn.textContent = '🔊 点我测语音';
+    btn.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483647;background:#e63946;color:#fff;border:none;border-radius:18px;padding:8px 12px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.4)';
+    btn.onclick = dbgVoiceTest;
+    document.body.appendChild(btn);
+  });
+}
 /* 兼容新旧两代 decodeAudioData：老内核只认回调式写法，返回 undefined，直接 .then 会失败 */
 function decodeAB(ab){
   return new Promise((resolve, reject)=>{
@@ -1320,11 +1351,17 @@ function getVoiceBuf(f){
   if(fileBufCache[f]) return Promise.resolve(fileBufCache[f]);
   const JSD = 'https://cdn.jsdelivr.net/gh/Smithmichael759/mahjong-game@main/voices/';
   const t0 = Date.now();
-  return fetch('voices/'+f).then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
+  DBG('开始下载 ' + f + ' …');
+  const fTO = (url, ms)=>{
+    const ctl = new AbortController();
+    const t = setTimeout(()=>ctl.abort(), ms);
+    return fetch(url, {signal: ctl.signal}).finally(()=>clearTimeout(t));
+  };
+  return fTO('voices/'+f, 9000).then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
     .then(ab=>{ DBG(`下载 ${f} ${(ab.byteLength/1024)|0}KB ${Date.now()-t0}ms`); return ab; })
     .catch(err=>{
-      DBG(`主通道失败 ${f}: ${err.message}，换 jsDelivr`);
-      return fetch(JSD + f).then(r=>{ if(!r.ok) throw new Error('jsd http '+r.status); return r.arrayBuffer(); });
+      DBG(`主通道失败 ${f}: ${err && err.message || err}，换 jsDelivr`);
+      return fTO(JSD + f, 9000).then(r=>{ if(!r.ok) throw new Error('jsd http '+r.status); return r.arrayBuffer(); });
     })
     .then(ab=>decodeAB(ab))
     .then(buf=>{ DBG(`解码 ${f} OK ${buf.duration.toFixed(1)}s`); fileBufCache[f]=buf; return buf; })
@@ -1360,19 +1397,26 @@ function decodeClip(uri){
 }
 function playClip(uri){
   if(!audioCtx || !voiceGain){ DBG('播放跳过：音频上下文未就绪'); return Promise.resolve(false); }
-  return decodeClip(uri).then(buf=>{
-    if(!soundOn) return false;
-    if(curClipSrc){ try{ curClipSrc.stop(); }catch(e){} }
-    const s = audioCtx.createBufferSource();
-    s.buffer = buf; s.connect(voiceGain); s.start();
-    curClipSrc = s;
-    DBG('播放 ' + (typeof uri==='object' ? (uri.f+'@'+uri.s) : 'clip') + ' ' + buf.duration.toFixed(2) + 's ctx=' + audioCtx.state);
-    return true;
-  }).catch(e=>{
-    DBG('WebAudio播放失败: ' + ((e && e.message) || e) + ' → 改用原生audio通道');
-    if(uri && typeof uri==='object' && uri.f) return playClipEl(uri);
-    return false;
+  const raced = Promise.race([
+    decodeClip(uri).then(buf=>{
+      if(!soundOn) return false;
+      if(curClipSrc){ try{ curClipSrc.stop(); }catch(e){} }
+      const s = audioCtx.createBufferSource();
+      s.buffer = buf; s.connect(voiceGain); s.start();
+      curClipSrc = s;
+      DBG('播放 ' + (typeof uri==='object' ? (uri.f+'@'+uri.s) : 'clip') + ' ' + buf.duration.toFixed(2) + 's ctx=' + audioCtx.state);
+      return true;
+    }).catch(e=>{
+      DBG('WebAudio播放失败: ' + ((e && e.message) || e) + ' → 改用原生audio通道');
+      if(uri && typeof uri==='object' && uri.f) return playClipEl(uri);
+      return false;
+    }),
+    new Promise(res=>setTimeout(()=>res('timeout'), 12000))
+  ]).then(v=>{
+    if(v === 'timeout'){ DBG('播放超时(12s未完成)'); return false; }
+    return v;
   });
+  return raced;
 }
 /* 进游戏后预热在座 4 位角色的语音文件，避免开口时还在下载 */
 function preloadCharVoices(){
@@ -1444,6 +1488,7 @@ function speak(seatIdx, text){
   // 优先：角色专属预录配音（真人声线，男女分明，带语气）
   const pack = VOICE_PACK[p.char.id];
   const clip = pack ? pack[text] : null;
+  DBG('speak: ' + p.char.id + ' clip=' + (clip ? '有' : '无') + ' ctx=' + (audioCtx ? audioCtx.state : 'null') + ' 文本=' + String(text).slice(0,10));
   if(clip && audioCtx){
     playClip(clip).then(ok=>{ if(!ok) speakTTS(p, text); });
     return;
@@ -1606,9 +1651,10 @@ function initAudio(){
   }
   const AC = window.AudioContext || window.webkitAudioContext;
   if(!AC) return;
-  try{
-    audioCtx = new AC();
-    bgmGain = audioCtx.createGain();
+    try{
+      audioCtx = new AC();
+      audioCtx.onstatechange = ()=> DBG('音频状态 → ' + audioCtx.state);
+      bgmGain = audioCtx.createGain();
     bgmGain.gain.value = soundOn ? BGM_VOL : 0;
     bgmGain.connect(audioCtx.destination);
     voiceGain = audioCtx.createGain();
@@ -1627,10 +1673,18 @@ function initAudio(){
    因此：页面重新可见时先尝试一次；任何触屏/点击都再做一次静默唤醒。 */
 function kickAudio(){
   if(!soundOn || !audioCtx || audioCtx.state==='running') return;
+  DBG('尝试唤醒音频(手势) state=' + audioCtx.state);
+  // iOS 经典解锁：在手势里播一个静音样本
+  try{
+    const ub = audioCtx.createBuffer(1, 1, 22050);
+    const us = audioCtx.createBufferSource();
+    us.buffer = ub; us.connect(audioCtx.destination); us.start(0);
+  }catch(e){}
   audioCtx.resume().then(()=>{
+    DBG('唤醒成功 state=' + audioCtx.state);
     if(bgmNextTime < audioCtx.currentTime) bgmNextTime = audioCtx.currentTime + 0.12;
     if(!bgmScheduler) startBGM(); // 有些浏览器后台会停掉调度器
-  }).catch(()=>{});
+  }).catch(e=>{ DBG('唤醒失败: ' + (e && e.message)); });
 }
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){
