@@ -5,7 +5,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0a1f35">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -253,8 +253,17 @@
   }
   #melds{display:flex; gap:8px; margin-bottom:8px; min-height:48px; flex-wrap:wrap;}
   .meld-group{display:flex; gap:2px; background:rgba(255,255,255,.06); border-radius:6px; padding:4px;}
-  #hand{display:flex; gap:4px; flex-wrap:wrap; min-height:50px; align-items:flex-end;}
-  #hand .tile{cursor:pointer; transition:transform .15s; transform:perspective(420px) rotateX(8deg);}
+  #hand{display:flex; gap:4px; flex-wrap:wrap; min-height:50px; align-items:flex-end; --tw:40px;}
+  #hand .tile{cursor:pointer; transition:transform .15s; transform:perspective(420px) rotateX(8deg);
+    width:var(--tw); height:calc(var(--tw)*1.35); border-radius:calc(var(--tw)*0.125);}
+  /* 手牌内部元素按牌宽等比缩放，适配任意屏幕宽度 */
+  #hand .tile .wcn{font-size:calc(var(--tw)*0.52);}
+  #hand .tile .wcs{font-size:calc(var(--tw)*0.36);}
+  #hand .tile .wc{font-size:calc(var(--tw)*0.55);}
+  #hand .tile .dot{width:calc(var(--tw)*0.27); height:calc(var(--tw)*0.27);}
+  #hand .tile .dot.big{width:calc(var(--tw)*0.42); height:calc(var(--tw)*0.42);}
+  #hand .tile .stk{width:calc(var(--tw)*0.15); height:calc(var(--tw)*0.4);}
+  #hand .tile .zi-bai{width:calc(var(--tw)*0.5); height:calc(var(--tw)*0.35); border-width:calc(var(--tw)*0.06);}
   #hand .tile:hover{transform:perspective(420px) rotateX(8deg) translateY(-10px) scale(1.03);}
   #hand .tile.sel{
     transform:perspective(420px) rotateX(8deg) translateY(-14px) scale(1.05) !important;
@@ -387,11 +396,7 @@
     #player-area{padding:6px 8px; margin-top:6px;}
     #melds{min-height:34px; gap:5px; margin-bottom:4px;}
     .meld-group{padding:2px;}
-    #hand{gap:3px; min-height:44px;}
-    #hand .tile{width:33px; height:45px; border-radius:4px;}
-    #hand .tile .wcn{font-size:17px;} #hand .tile .wcs{font-size:12px;} #hand .tile .wc{font-size:18px;}
-    #hand .tile .dot{width:9px; height:9px;} #hand .tile .dot.big{width:14px; height:14px;}
-    #hand .tile .stk{width:5px; height:13px;} #hand .tile .zi-bai{width:16px; height:11px; border-width:2px;}
+    #hand{gap:2px; min-height:44px; --tw:clamp(19px, calc((100vw - 46px)/14), 33px);}
     #actions{gap:6px; margin-top:8px; min-height:34px;}
     .btn{padding:8px 15px; font-size:14px; letter-spacing:1px; border-radius:7px;}
 
@@ -400,16 +405,57 @@
     #subtitle-bar .sub-av{width:22px; height:22px;}
     #skill-zone{margin-top:4px; padding-right:104px; text-align:left;}
     #skill-btn{padding:7px 12px; font-size:11.5px; max-width:100%; white-space:normal; line-height:1.5; display:inline-block;}
-    #auto-btn{right:8px; bottom:8px; padding:9px 14px; font-size:13px; border-radius:20px;}
 
     /* 结算弹窗等 */
     #result-panel{width:94vw; max-width:94vw; padding:18px 14px 16px;}
     #result-panel h2{font-size:22px; letter-spacing:2px;}
     #points-table,#tai-detail{font-size:12px;}
+    /* 刘海屏安全区：底部按钮不被 Home 条遮住 */
+    #screen-game{padding-bottom:calc(58px + env(safe-area-inset-bottom, 0px));}
+    #auto-btn{right:8px; bottom:calc(8px + env(safe-area-inset-bottom, 0px)); padding:9px 14px; font-size:13px; border-radius:20px;}
   }
   /* 手机横屏：牌桌加高，恢复接近平板布局 */
   @media (max-width:900px) and (orientation:landscape) and (max-height:520px){
-    #table{height:calc(100vh - 210px); min-height:300px;}
+    #table{height:calc(100vh - 210px); height:calc(100dvh - 210px); min-height:300px;}
+  }
+
+  /* ============ 平板适配（iPad 竖屏/横屏、641-1280px） ============ */
+  @media (min-width:641px) and (max-width:1280px){
+    /* 牌桌随屏幕加高 */
+    #table{height:min(58vh, 540px);}
+    #center{width:280px;}
+    #center-msg{font-size:15px;}
+    #center-msg.big{font-size:21px;}
+    #last-discard{min-height:60px;}
+
+    /* 手牌放大（等比内部元素） */
+    #hand{--tw:clamp(36px, calc((100vw - 64px)/14), 54px); gap:5px; min-height:64px;}
+
+    /* 对家 */
+    .seat-top{width:480px; top:10px;}
+    .seat-top .avatar{width:52px; height:52px;}
+    .seat-top .tile-back{width:24px; height:33px;}
+    .seat-top .discard-pile{grid-template-columns:repeat(6,auto); gap:2px; max-width:230px;}
+
+    /* 左右家 */
+    .seat{width:190px;}
+    .seat-left,.seat-right{width:210px;}
+    .seat-left .avatar,.seat-right .avatar{width:56px; height:56px;}
+    .seat-left .tile-back,.seat-right .tile-back{width:30px; height:15px;}
+    .seat-left .discard-pile,.seat-right .discard-pile{grid-template-columns:repeat(5,auto); gap:2px; max-width:150px;}
+
+    /* 字号整体放大 */
+    .seat-info{font-size:14px;}
+    .seat-info .pname{font-size:17px;}
+    .seat-info .ppt{font-size:13px;}
+    #wallinfo{font-size:15px;}
+    #topbar .logo{font-size:26px;}
+    #topbar{flex-wrap:wrap;}
+    #subtitle-bar{max-width:88vw; font-size:15px; min-height:40px;}
+    #skill-btn{font-size:14px;}
+    #auto-btn{padding:12px 20px; font-size:15px;}
+    #result-panel{width:72vw; max-width:600px;}
+    #points-table,#tai-detail{font-size:14px;}
   }
 
   /* ============ 闯关模式 ============ */
